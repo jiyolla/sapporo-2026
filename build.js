@@ -175,6 +175,27 @@ function enhance(){
     if(first&&!location.hash){ first=false; const t=cur||nxt; if(t) setTimeout(()=>t.scrollIntoView({block:'center'}),60); }
     first=false;
   }
+  // 이동 버튼 — 맨 위 · 이전 날 · 다음 날
+  const dayEls=$$('.day'), J=document.createElement('div'); J.className='jump';
+  const mk=(lab)=>{ const b=document.createElement('button'); b.type='button'; b.setAttribute('aria-label',lab); b.title=lab; J.append(b); return b; };
+  const bPrev=mk('이전 날짜로'), bNext=mk('다음 날짜로'), bTop=mk('맨 위로');
+  bTop.textContent='▲';
+  const tgt=new Map();
+  [bPrev,bNext].forEach(b=>b.addEventListener('click',()=>{ const d=tgt.get(b); if(d) d.scrollIntoView({behavior:'smooth',block:'start'}); }));
+  bTop.addEventListener('click',()=>scrollTo({top:0,behavior:'smooth'}));
+  const put=(b,d,arrow)=>{
+    tgt.set(b,d); b.hidden=!d; if(!d) return;
+    b.textContent=''; const x=document.createElement('b'); x.textContent='D'+d.id.slice(1);
+    b.append(arrow+' ',x); b.style.setProperty('--c',d.style.getPropertyValue('--c'));
+  };
+  let raf=0;
+  const upd=()=>{ raf=0;
+    let i=-1; dayEls.forEach((d,k)=>{ if(d.getBoundingClientRect().top<=110) i=k; });
+    const past=i>=0&&dayEls[i].getBoundingClientRect().bottom<=110;
+    put(bPrev,dayEls[past?i:i-1],'↑'); put(bNext,dayEls[i+1],'↓'); bTop.hidden=scrollY<500;
+  };
+  addEventListener('scroll',()=>{ if(!raf) raf=requestAnimationFrame(upd); },{passive:true});
+  B.append(J); upd();
   tick(); setInterval(tick,30000);
   document.addEventListener('visibilitychange',()=>{ if(!document.hidden) tick(); });
   if(location.hash){ const t=document.getElementById(location.hash.slice(1)); if(t) t.scrollIntoView(); }
