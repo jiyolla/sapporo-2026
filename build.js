@@ -41,7 +41,7 @@ async function password() {
 }
 
 (async () => {
-  const pw = (await password()).normalize('NFC');
+  const pw = (await password()).trim().normalize('NFC');   // 브라우저도 trim 하므로 모든 입력 경로를 맞춘다
   if (pw.length < 12) { console.error('비밀번호가 너무 짧습니다'); process.exit(1); }
 
   const plain = fs.readFileSync(SRC);
@@ -90,7 +90,9 @@ async function unlock(pw){
   const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:d(P.i),tagLength:128},k,d(P.c));
   return new TextDecoder().decode(pt);
 }
+let done=false;   // 자동 해제와 수동 입력이 겹쳐도 한 번만 그린다
 function render(html){
+  if(done) return; done=true;
   const doc=new DOMParser().parseFromString(html,'text/html');
   doc.querySelectorAll('template').forEach(n=>n.remove());
   for(const n of [...doc.querySelectorAll('*')]){
@@ -253,7 +255,8 @@ label{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:
   tokens.add(pw);                                                                     // 비밀번호 자체
   // 로더 템플릿(=이 스크립트)과 공유하는 문자열은 보일러플레이트이므로 표본에서 뺀다
   const boiler = fs.readFileSync(__filename, 'utf8');
-  const probes = [...tokens].filter(t => (t.length >= 8 || /[぀-鿿]/.test(t) || t === pw) && !boiler.includes(t));
+  if (boiler.includes(pw)) { console.error('비밀번호가 build.js 안에 있습니다'); process.exit(1); }
+  const probes = [...tokens].filter(t => t === pw || ((t.length >= 8 || /[぀-鿿]/.test(t)) && !boiler.includes(t)));
   if (probes.length < 50) { console.error('검사 표본 부족'); process.exit(1); }
 
   // 커밋될 수 있는 파일 전부(추적 + 무시되지 않은 미추적) + 지금 만든 산출물
