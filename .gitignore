@@ -1,0 +1,5 @@
+.DS_Store
+*.plain.html
+*.key
+password
+*.tmp
