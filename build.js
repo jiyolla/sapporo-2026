@@ -161,6 +161,11 @@ function enhance(){
     const listV=mk('div','rvlist'), log=mk('div','rvl');
     const NK='rvname'+location.pathname, nm=mk('input','rvti rvnm'); nm.placeholder='작성자 이름 (스스로 적습니다 · 이 기기에 기억)'; nm.maxLength=30;
     try{ nm.value=localStorage.getItem(NK)||''; }catch(_){}
+    // 내 글 구분 — 이 브라우저의 임의 기기 ID(1순위) 또는 지금 입력칸의 이름과 같은 이름(보완). 표시용일 뿐 인증이 아니다.
+    const DK='rvdev'+location.pathname; let DEV='';
+    try{ DEV=localStorage.getItem(DK)||''; if(!DEV){ DEV=b64(crypto.getRandomValues(new Uint8Array(12))); localStorage.setItem(DK,DEV); } }
+    catch(_){ DEV=b64(crypto.getRandomValues(new Uint8Array(12))); }
+    const mine=(name,dev)=>!!((dev&&dev===DEV)||(name&&nm.value.trim()&&name.trim()===nm.value.trim()));
     const tIn=mk('input','rvti'); tIn.placeholder='스레드 제목 (예: DAY 2 저녁 동선)'; tIn.maxLength=80;
     const ta=mk('textarea','rvt'); ta.rows=7; ta.placeholder='내용 — 일정 내용을 그대로 써도 됩니다. 암호화해서 올립니다.';
     const bt=mk('button','rvb'); bt.type='button';
@@ -200,8 +205,8 @@ function enhance(){
     const last=th=>Math.max(th.fs.length?fnTime(th.fs[th.fs.length-1].name):0,...pend.filter(p=>p.t===th.t).map(p=>p.ms));
     const headOf=async th=>{ const p=pend.find(x=>x.t===th.t&&x.title); if(!th.fs.length) return p?{title:p.title,name:p.name}:{title:'(기록 중)'};
       const m=await blob(th.fs[0].sha); if(!m) return {title:'(읽을 수 없음)'}; return {title:m.title||m.text.split('\\n')[0].slice(0,40),name:m.name}; };
-    function bubble(who,ms,text,pending,name){
-      const el=mk('div','rvmsg '+who+(pending?' pending':'')); el.append(mk('small',null,(who==='a'?'답변':'리뷰')+(name?' · '+name:'')+' · '+kst(ms)+(pending?' · 기록 중':'')),mk('p',null,text)); return el;
+    function bubble(who,ms,text,pending,name,dev){
+      const el=mk('div','rvmsg '+(who==='a'?'a':mine(name,dev)?'me':'r')+(pending?' pending':'')); el.append(mk('small',null,[who==='a'?'Claude':name,kst(ms),pending?'기록 중':''].filter(Boolean).join(' · ')),mk('p',null,text)); return el;   // 답변 이름은 경로로 확인된 고정값
     }
     async function draw(){
       const inList=cur===null, isNew=cur==='new';
@@ -226,15 +231,16 @@ function enhance(){
       const th=threads().find(x=>x.t===cur)||{t:cur,fs:[]};
       ttl.textContent=(await headOf(th)).title;
       const atBottom=log.scrollHeight-log.scrollTop-log.clientHeight<40;
-      const els=await Promise.all(th.fs.map(async f=>{ const m=await blob(f.sha); return m?bubble(f.who,Date.parse(m.at)||fnTime(f.name),m.text,false,m.name):null; }));
+      const els=await Promise.all(th.fs.map(async f=>{ const m=await blob(f.sha); return m?bubble(f.who,Date.parse(m.at)||fnTime(f.name),m.text,false,m.name,m.dev):null; }));
       log.textContent=''; els.forEach(x=>{ if(x) log.append(x); });
-      pend.filter(p=>p.t===cur).forEach(p=>log.append(bubble('r',p.ms,p.text,true,p.name)));
+      pend.filter(p=>p.t===cur).forEach(p=>log.append(bubble('r',p.ms,p.text,true,p.name,DEV)));
       if(atBottom) log.scrollTop=log.scrollHeight;
     }
     const refresh=()=>loadTree().then(draw).then(()=>{ if(!pend.length&&/^올렸습니다/.test(msg.textContent)) msg.textContent=''; }).catch(e=>{ msg.textContent='불러오지 못했습니다 — '+e.message; });
     back.addEventListener('click',()=>{ cur=null; msg.textContent=''; draw(); });
     newB.addEventListener('click',()=>{ cur='new'; msg.textContent=''; draw(); tIn.focus(); });
     rf.addEventListener('click',refresh);
+    nm.addEventListener('change',()=>{ if(cur!==null&&cur!=='new') draw(); });
     async function seal(obj){
       const z=new Uint8Array(await pipe(new TextEncoder().encode(JSON.stringify(obj)),new CompressionStream('deflate-raw')));
       const iv=crypto.getRandomValues(new Uint8Array(12));
@@ -255,10 +261,10 @@ function enhance(){
       try{
         const now=new Date().toISOString();
         if(cur==='new'){
-          const j=await post('/issues',{title:'review '+now.slice(0,16).replace('T',' '),body:await seal({v:2,at:now,name,title,text})});
+          const j=await post('/issues',{title:'review '+now.slice(0,16).replace('T',' '),body:await seal({v:2,at:now,name,dev:DEV,title,text})});
           pend.push({t:j.number,id:j.number,text,title,name,ms:Date.now()}); cur=j.number; tIn.value='';
         }else{
-          const j=await post('/issues/'+cur+'/comments',{body:await seal({v:2,at:now,name,text})});
+          const j=await post('/issues/'+cur+'/comments',{body:await seal({v:2,at:now,name,dev:DEV,text})});
           pend.push({t:cur,id:j.id,text,name,ms:Date.now()});
         }
         ta.value=''; msg.textContent='올렸습니다 — 1분쯤 뒤 기록되면 고정됩니다';
