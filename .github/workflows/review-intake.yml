@@ -1,19 +1,24 @@
 # 페이지에서 올린 리뷰(암호문)를 reviews 브랜치의 파일로 옮긴다.
+# - 스레드 하나 = 이슈 하나. 이슈 본문 = 첫 메시지, 이슈 댓글 = 이어지는 메시지.
+#   기록 위치: reviews/t<이슈 번호>/<UTC 시각>-r<이슈 번호 또는 댓글 id>.txt
 # - 페이지 토큰은 이슈 쓰기 권한뿐이라 코드를 바꿀 수 없다. 파일 기록은 이 워크플로만 한다.
-# - 저장소 주인이 연 이슈 · 정해진 형식(머리줄 + base64 두 줄)만 받는다. 그 밖의 내용은 기록하지 않는다.
-# - 파일 이름 끝 -r<이슈 번호> 가 "리뷰" 표시다. 답변(-a)은 저장소 주인만 직접 기록한다.
+# - 저장소 주인이 쓴 것 · 정해진 형식(머리줄 + base64 두 줄)만 받는다.
+#   형식이 다르면(평문 등) 기록하지 않고 지운다: 댓글은 삭제, 이슈는 본문을 비우고 닫는다.
+# - 파일 이름 끝 -r 이 "리뷰" 표시다. 답변(-a)은 저장소 주인만 직접 기록한다.
 # - main 은 건드리지 않는다. 기록 대상은 reviews 브랜치뿐이다.
 name: review-intake
 on:
   issues:
     types: [opened]
+  issue_comment:
+    types: [created]
 permissions: {}
-concurrency:
-  group: review-intake
-  cancel-in-progress: false
 jobs:
   intake:
-    if: github.event.issue.user.login == github.repository_owner && startsWith(github.event.issue.title, 'review ')
+    if: >-
+      startsWith(github.event.issue.title, 'review ') && (
+        (github.event_name == 'issues' && github.event.issue.user.login == github.repository_owner) ||
+        (github.event_name == 'issue_comment' && github.event.comment.user.login == github.repository_owner))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -22,7 +27,7 @@ jobs:
     steps:
       - name: 형식 검사
         env:
-          BODY: ${{ github.event.issue.body }}
+          BODY: ${{ github.event_name == 'issues' && github.event.issue.body || github.event.comment.body }}
         run: |
           python3 - <<'PY'
           import os, re
@@ -36,24 +41,33 @@ jobs:
           PY
       - name: reviews 브랜치에 기록
         env:
-          NUM: ${{ github.event.issue.number }}
+          EVENT: ${{ github.event_name }}
+          THREAD: ${{ github.event.issue.number }}
+          ID: ${{ github.event_name == 'issues' && github.event.issue.number || github.event.comment.id }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if [ "$(cat ok)" != 1 ]; then
-            gh issue close "$NUM" -R "$REPO" -r "not planned" -c "형식이 맞지 않아 기록하지 않았습니다."
+            if [ "$EVENT" = issues ]; then
+              gh issue edit "$THREAD" -R "$REPO" --body "형식이 맞지 않아 내용을 지웠습니다."
+              gh issue close "$THREAD" -R "$REPO" -r "not planned"
+            else
+              gh api -X DELETE "repos/$REPO/issues/comments/$ID"
+            fi
             exit 0
           fi
-          git init -q r && cd r
-          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
-          if git fetch -q --depth=1 origin reviews 2>/dev/null; then git checkout -q -B reviews FETCH_HEAD
-          else git checkout -q --orphan reviews; fi
-          mkdir -p reviews
-          f="reviews/$(date -u +%Y%m%d-%H%M%S)-r${NUM}.txt"
-          cp ../review.txt "$f"
-          git add "$f"
-          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -q -m "review #${NUM}"
-          git push -q origin HEAD:refs/heads/reviews
-          gh issue close "$NUM" -R "$REPO" -c "기록했습니다 — reviews 브랜치 \`$f\`"
+          f="reviews/t${THREAD}/$(date -u +%Y%m%d-%H%M%S)-r${ID}.txt"
+          # 동시에 들어온 메시지와 부딪히면 최신 브랜치를 다시 받아 재시도한다 (어떤 메시지도 버리지 않는다)
+          for i in 1 2 3 4 5 6; do
+            rm -rf r && git init -q r && cd r
+            git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+            if git fetch -q --depth=1 origin reviews 2>/dev/null; then git checkout -q -B reviews FETCH_HEAD
+            else git checkout -q --orphan reviews; fi
+            mkdir -p "$(dirname "$f")" && cp ../review.txt "$f" && git add "$f"
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -q -m "review t${THREAD}"
+            if git push -q origin HEAD:refs/heads/reviews; then echo "기록: $f"; exit 0; fi
+            cd .. && sleep $((i * 3))
+          done
+          echo "기록 실패" >&2; exit 1
