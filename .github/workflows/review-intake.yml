@@ -5,11 +5,12 @@
 # - 저장소 주인이 쓴 것 · 정해진 형식(머리줄 + base64 두 줄)만 받는다.
 #   형식이 다르면(평문 등) 기록하지 않고 지운다: 댓글은 삭제, 이슈는 본문을 비우고 닫는다.
 # - 파일 이름 끝 -r 이 "리뷰" 표시다. 답변(-a)은 저장소 주인만 직접 기록한다.
+# - 스레드 삭제: 저장소 주인이 이슈를 닫으면 reviews/t<번호>/ 를 지운다 (페이지의 삭제 버튼이 이슈를 닫는다).
 # - main 은 건드리지 않는다. 기록 대상은 reviews 브랜치뿐이다.
 name: review-intake
 on:
   issues:
-    types: [opened]
+    types: [opened, closed]
   issue_comment:
     types: [created]
 permissions: {}
@@ -17,7 +18,7 @@ jobs:
   intake:
     if: >-
       startsWith(github.event.issue.title, 'review ') && (
-        (github.event_name == 'issues' && github.event.issue.user.login == github.repository_owner) ||
+        (github.event_name == 'issues' && github.event.action == 'opened' && github.event.issue.user.login == github.repository_owner) ||
         (github.event_name == 'issue_comment' && github.event.comment.user.login == github.repository_owner))
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -71,3 +72,32 @@ jobs:
             cd .. && sleep $((i * 3))
           done
           echo "기록 실패" >&2; exit 1
+  remove:
+    if: >-
+      github.event_name == 'issues' && github.event.action == 'closed' &&
+      startsWith(github.event.issue.title, 'review ') && github.event.sender.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: 스레드 파일 지우기
+        env:
+          THREAD: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5 6; do
+            rm -rf r && git init -q r && cd r
+            git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+            git fetch -q --depth=1 origin reviews 2>/dev/null || { echo "reviews 브랜치 없음"; exit 0; }
+            git checkout -q -B reviews FETCH_HEAD
+            [ -d "reviews/t${THREAD}" ] || { echo "지울 파일 없음"; exit 0; }
+            git rm -q -r "reviews/t${THREAD}"
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -q -m "remove t${THREAD}"
+            if git push -q origin HEAD:refs/heads/reviews; then echo "삭제: t${THREAD}"; exit 0; fi
+            cd .. && sleep $((i * 3))
+          done
+          echo "삭제 실패" >&2; exit 1
