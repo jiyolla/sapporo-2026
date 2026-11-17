@@ -83,13 +83,11 @@ const P=${P},ALLOW=${JSON.stringify(ALLOW)},
   DENY=['script','iframe','object','embed','base','form','input','button','textarea','select','frame','frameset','applet','portal'];
 const LK='ok'+location.pathname, CK='ck'+location.pathname;   // 경로별 분리 — 같은 origin의 다른 여행 페이지와 안 섞이게
 const d=s=>Uint8Array.from(atob(s),x=>x.charCodeAt(0));
-let K=null;   // 페이지 키 — 리뷰 암호화에도 쓴다 (추출 불가)
 async function unlock(pw){
   const km=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw.normalize('NFC')),'PBKDF2',false,['deriveKey']);
   const k=await crypto.subtle.deriveKey({name:'PBKDF2',salt:d(P.s),iterations:P.n,hash:'SHA-256'},
-    km,{name:'AES-GCM',length:256},false,['decrypt','encrypt']);
+    km,{name:'AES-GCM',length:256},false,['decrypt']);
   const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:d(P.i),tagLength:128},k,d(P.c));
-  K=k;
   return new TextDecoder().decode(pt);
 }
 let done=false;   // 자동 해제와 수동 입력이 겹쳐도 한 번만 그린다
@@ -144,35 +142,127 @@ function enhance(){
     $$('.pin.on').forEach(p=>{ if(p!==pin) p.classList.remove('on'); });
     if(pin) pin.classList.toggle('on');
   });
-  // 리뷰 — 본문을 이 페이지 키로 암호화해 GitHub 이슈로 올린다 (토큰은 이슈 쓰기 권한뿐)
-  const RV=$('#review[data-tk][data-repo]');
-  if(RV&&K){
-    const ta=document.createElement('textarea'); ta.className='rvt'; ta.rows=10;
-    ta.placeholder='리뷰 내용 — 일정 내용을 그대로 써도 됩니다. 암호화해서 올립니다.';
-    const bt=document.createElement('button'); bt.type='button'; bt.className='rvb'; bt.textContent='리뷰 올리기';
-    const msg=document.createElement('p'); msg.className='rvm'; msg.setAttribute('role','status');
-    const box=document.createElement('div'); box.className='rv'; box.append(ta,bt,msg); RV.append(box);
+  // 리뷰 스레드 — 스레드 하나 = GitHub 이슈 하나. 메시지는 리뷰 키(이 평문 페이지 안에만 있음)로 암호화돼
+  // reviews 브랜치 reviews/t<이슈 번호>/ 에 쌓인다. 누가 썼는지는 파일 이름으로만 정한다:
+  // -r<번호> = 리뷰(워크플로가 기록) · -a = 답변(저장소 주인만 기록). 이슈에는 암호문만 남는다.
+  const RV=$('#review[data-tk][data-repo][data-rk]');
+  if(RV){
+    const API='https://api.github.com/repos/'+RV.dataset.repo, TK=RV.dataset.tk;
+    const hd=acc=>({'Authorization':'Bearer '+TK,'Accept':acc,'X-GitHub-Api-Version':'2022-11-28'});
     const b64=u=>{let s='';for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(s);};
+    const keyP=crypto.subtle.importKey('raw',d(RV.dataset.rk),'AES-GCM',false,['encrypt','decrypt']);
+    const pipe=(bytes,ts)=>new Response(new Blob([bytes]).stream().pipeThrough(ts)).arrayBuffer();
+    const kst=ms=>{const t=new Date(ms+9*36e5).toISOString();return t.slice(5,10).replace('-','/')+' '+t.slice(11,16);};
+    const fnTime=n=>Date.UTC(+n.slice(0,4),+n.slice(4,6)-1,+n.slice(6,8),+n.slice(9,11),+n.slice(11,13),+n.slice(13,15));
+    const mk=(t,c,x)=>{const n=document.createElement(t); if(c) n.className=c; if(x!=null) n.textContent=x; return n;};
+    // 화면: 위 막대 · 스레드 목록 · 대화 · 입력
+    const back=mk('button','rvback','← 목록'), ttl=mk('b','rvttl','스레드'), rf=mk('button','rvr','새로고침');
+    back.type=rf.type='button'; const top=mk('div','rvtop'); top.append(back,ttl,rf);
+    const listV=mk('div','rvlist'), log=mk('div','rvl');
+    const tIn=mk('input','rvti'); tIn.placeholder='스레드 제목 (예: DAY 2 저녁 동선)'; tIn.maxLength=80;
+    const ta=mk('textarea','rvt'); ta.rows=7; ta.placeholder='내용 — 일정 내용을 그대로 써도 됩니다. 암호화해서 올립니다.';
+    const bt=mk('button','rvb'); bt.type='button';
+    const msg=mk('p','rvm'); msg.setAttribute('role','status');
+    const comp=mk('div','rv'); comp.append(tIn,ta,bt,msg);
+    const newB=mk('button','rvnew','+ 새 스레드'); newB.type='button';
+    RV.append(top,listV,log,comp);
+    let tree=[], cur=null, pend=[];   // cur: null=목록 · 'new'=새 스레드 · 숫자=스레드 / pend: [{t,text,title}]
+    const blobs=new Map();
+    async function dec(body){
+      const L=body.replace(/\\r/g,'').trim().split('\\n');
+      if(L.length!==3||L[0]!=='sapporo-review v2') throw new Error('fmt');
+      const z=await crypto.subtle.decrypt({name:'AES-GCM',iv:d(L[1]),tagLength:128},await keyP,d(L[2]));
+      return JSON.parse(new TextDecoder().decode(await pipe(z,new DecompressionStream('deflate-raw'))));
+    }
+    async function blob(sha){
+      if(blobs.has(sha)) return blobs.get(sha);
+      let m=null;
+      try{ const r=await fetch(API+'/git/blobs/'+sha,{headers:hd('application/vnd.github.raw')}); if(r.ok) m=await dec(await r.text()); }catch(_){}
+      blobs.set(sha,m); return m;
+    }
+    async function loadTree(){
+      const r=await fetch(API+'/git/trees/reviews?recursive=1',{headers:hd('application/vnd.github+json'),cache:'no-store'});
+      if(r.status===404||r.status===409){ tree=[]; return; }
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      tree=[];
+      for(const x of (await r.json()).tree||[]){
+        const m=x.type==='blob'&&/^reviews\\/t(\\d+)\\/(\\d{8}-\\d{6}-(r\\d+|a)\\.txt)$/.exec(x.path);
+        if(m) tree.push({t:+m[1],name:m[2],who:m[3]==='a'?'a':'r',sha:x.sha});
+      }
+      tree.sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0);
+      pend=pend.filter(p=>!tree.some(f=>f.t===p.t&&f.name.endsWith('-r'+p.id+'.txt')));
+    }
+    const threads=()=>{ const g=new Map(); for(const f of tree){ if(!g.has(f.t)) g.set(f.t,[]); g.get(f.t).push(f); }
+      for(const p of pend) if(!g.has(p.t)) g.set(p.t,[]);
+      return [...g].map(([t,fs])=>({t,fs})).sort((a,b)=>last(b)-last(a)); };
+    const last=th=>Math.max(th.fs.length?fnTime(th.fs[th.fs.length-1].name):0,...pend.filter(p=>p.t===th.t).map(p=>p.ms));
+    const titleOf=async th=>{ const p=pend.find(x=>x.t===th.t&&x.title); if(!th.fs.length) return p?p.title:'(기록 중)';
+      const m=await blob(th.fs[0].sha); if(!m) return '(읽을 수 없음)'; return m.title||m.text.split('\\n')[0].slice(0,40); };
+    function bubble(who,ms,text,pending){
+      const el=mk('div','rvmsg '+who+(pending?' pending':'')); el.append(mk('small',null,(who==='a'?'답변':'리뷰')+' · '+kst(ms)+(pending?' · 기록 중':'')),mk('p',null,text)); return el;
+    }
+    async function draw(){
+      const inList=cur===null, isNew=cur==='new';
+      back.hidden=inList; listV.hidden=!inList; log.hidden=inList||isNew; comp.hidden=inList;
+      tIn.hidden=!isNew; bt.textContent=isNew?'스레드 만들기':'답글 올리기';
+      if(inList){
+        ttl.textContent='스레드';
+        const ths=threads(), rows=await Promise.all(ths.map(async th=>{
+          const row=mk('button','rvrow'); row.type='button';
+          const lastF=th.fs[th.fs.length-1], waiting=pend.some(p=>p.t===th.t)||(lastF&&lastF.who==='r');
+          row.append(mk('b',null,await titleOf(th)),
+            mk('span',null,th.fs.length+'개 · '+(last(th)?kst(last(th)):'')+' · '+(waiting?'답변 대기':'답변함')));
+          if(waiting) row.classList.add('wait');
+          row.addEventListener('click',()=>{ cur=th.t; msg.textContent=''; draw().then(()=>{ log.scrollTop=log.scrollHeight; }); });
+          return row; }));
+        listV.textContent=''; listV.append(newB, ...rows);
+        if(!rows.length) listV.append(mk('p','rve','아직 스레드가 없습니다.'));
+        return;
+      }
+      if(isNew){ ttl.textContent='새 스레드'; return; }
+      const th=threads().find(x=>x.t===cur)||{t:cur,fs:[]};
+      ttl.textContent=await titleOf(th);
+      const atBottom=log.scrollHeight-log.scrollTop-log.clientHeight<40;
+      const els=await Promise.all(th.fs.map(async f=>{ const m=await blob(f.sha); return m?bubble(f.who,Date.parse(m.at)||fnTime(f.name),m.text):null; }));
+      log.textContent=''; els.forEach(x=>{ if(x) log.append(x); });
+      pend.filter(p=>p.t===cur).forEach(p=>log.append(bubble('r',p.ms,p.text,true)));
+      if(atBottom) log.scrollTop=log.scrollHeight;
+    }
+    const refresh=()=>loadTree().then(draw).then(()=>{ if(!pend.length&&/^올렸습니다/.test(msg.textContent)) msg.textContent=''; }).catch(e=>{ msg.textContent='불러오지 못했습니다 — '+e.message; });
+    back.addEventListener('click',()=>{ cur=null; msg.textContent=''; draw(); });
+    newB.addEventListener('click',()=>{ cur='new'; msg.textContent=''; draw(); tIn.focus(); });
+    rf.addEventListener('click',refresh);
+    async function seal(obj){
+      const z=new Uint8Array(await pipe(new TextEncoder().encode(JSON.stringify(obj)),new CompressionStream('deflate-raw')));
+      const iv=crypto.getRandomValues(new Uint8Array(12));
+      const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,tagLength:128},await keyP,z));
+      const body=['sapporo-review v2',b64(iv),b64(ct)].join(String.fromCharCode(10));
+      if(body.length>65000) throw new Error('too-long');
+      return body;
+    }
+    const post=(path,o)=>fetch(API+path,{method:'POST',headers:Object.assign(hd('application/vnd.github+json'),{'Content-Type':'application/json'}),body:JSON.stringify(o)})
+      .then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); });
     bt.addEventListener('click',async()=>{
-      const text=ta.value.trim(); if(!text){msg.textContent='내용이 비어 있습니다';return;}
+      const text=ta.value.trim(), title=tIn.value.trim();
+      if(!text){ msg.textContent='내용이 비어 있습니다'; return; }
+      if(cur==='new'&&!title){ msg.textContent='제목을 적어 주세요'; return; }
       bt.disabled=true; msg.textContent='암호화해서 올리는 중…';
       try{
-        const doc=new TextEncoder().encode(JSON.stringify({v:1,at:new Date().toISOString(),text}));
-        const z=new Uint8Array(await new Response(new Blob([doc]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer());
-        const iv=crypto.getRandomValues(new Uint8Array(12));
-        const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,tagLength:128},K,z));
-        const body=['sapporo-review v1',P.s,b64(iv),b64(ct)].join(String.fromCharCode(10));
-        if(body.length>65000) throw new Error('too-long');
-        const r=await fetch('https://api.github.com/repos/'+RV.dataset.repo+'/issues',{method:'POST',
-          headers:{'Authorization':'Bearer '+RV.dataset.tk,'Accept':'application/vnd.github+json',
-                   'X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json'},
-          body:JSON.stringify({title:'review '+new Date().toISOString().slice(0,16).replace('T',' '),body})});
-        if(!r.ok) throw new Error('HTTP '+r.status);
-        const j=await r.json(); ta.value='';
-        msg.textContent='올렸습니다 (#'+j.number+') — 1~2분 안에 기록됩니다';
+        const now=new Date().toISOString();
+        if(cur==='new'){
+          const j=await post('/issues',{title:'review '+now.slice(0,16).replace('T',' '),body:await seal({v:2,at:now,title,text})});
+          pend.push({t:j.number,id:j.number,text,title,ms:Date.now()}); cur=j.number; tIn.value='';
+        }else{
+          const j=await post('/issues/'+cur+'/comments',{body:await seal({v:2,at:now,text})});
+          pend.push({t:cur,id:j.id,text,ms:Date.now()});
+        }
+        ta.value=''; msg.textContent='올렸습니다 — 1분쯤 뒤 기록되면 고정됩니다';
+        await draw(); log.scrollTop=log.scrollHeight;
+        let k=0; const iv2=setInterval(()=>{ if(!pend.length||++k>16){ clearInterval(iv2); if(pend.length) msg.textContent='기록이 늦어지고 있습니다 — 잠시 뒤 새로고침'; else msg.textContent=''; return; } refresh(); },15000);
       }catch(e){ msg.textContent=e.message==='too-long'?'너무 깁니다 — 나눠서 올려 주세요':'올리지 못했습니다 — '+e.message; }
       bt.disabled=false;
     });
+    refresh(); setInterval(()=>{ if(!document.hidden&&!pend.length) refresh(); },60000);
   }
   // 지금 모드 — 일본 시각(JST) 기준
   const jst=()=>{ const t=new Date(Date.now()+9*36e5).toISOString(); return [t.slice(0,10),t.slice(11,16)]; };
@@ -306,6 +396,7 @@ label{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:
   for (const m of txt.matchAll(/\d{2,4}-\d{3,4}-\d{4}/g)) tokens.add(m[0]);           // 전화번호
   for (const m of txt.matchAll(/[A-Za-z]{4,}(?:\s+[A-Za-z]{2,}){2,}/g)) tokens.add(m[0]); // 영문 주소류
   for (const m of txt.matchAll(/github_pat_[A-Za-z0-9_]{20,}/g)) tokens.add(m[0]);   // 리뷰 토큰
+  for (const m of txt.matchAll(/data-rk="([A-Za-z0-9+/=]{40,})"/g)) tokens.add(m[1]); // 리뷰 키
   tokens.add(pw);                                                                     // 비밀번호 자체
   // 로더 템플릿(=이 스크립트)과 공유하는 문자열은 보일러플레이트이므로 표본에서 뺀다
   const boiler = fs.readFileSync(__filename, 'utf8');
