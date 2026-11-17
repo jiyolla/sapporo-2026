@@ -159,11 +159,13 @@ function enhance(){
     const back=mk('button','rvback','← 목록'), ttl=mk('b','rvttl','스레드'), rf=mk('button','rvr','새로고침');
     back.type=rf.type='button'; const top=mk('div','rvtop'); top.append(back,ttl,rf);
     const listV=mk('div','rvlist'), log=mk('div','rvl');
+    const NK='rvname'+location.pathname, nm=mk('input','rvti rvnm'); nm.placeholder='작성자 이름 (스스로 적습니다 · 이 기기에 기억)'; nm.maxLength=30;
+    try{ nm.value=localStorage.getItem(NK)||''; }catch(_){}
     const tIn=mk('input','rvti'); tIn.placeholder='스레드 제목 (예: DAY 2 저녁 동선)'; tIn.maxLength=80;
     const ta=mk('textarea','rvt'); ta.rows=7; ta.placeholder='내용 — 일정 내용을 그대로 써도 됩니다. 암호화해서 올립니다.';
     const bt=mk('button','rvb'); bt.type='button';
     const msg=mk('p','rvm'); msg.setAttribute('role','status');
-    const comp=mk('div','rv'); comp.append(tIn,ta,bt,msg);
+    const comp=mk('div','rv'); comp.append(nm,tIn,ta,bt,msg);
     const newB=mk('button','rvnew','+ 새 스레드'); newB.type='button';
     RV.append(top,listV,log,comp);
     let tree=[], cur=null, pend=[];   // cur: null=목록 · 'new'=새 스레드 · 숫자=스레드 / pend: [{t,text,title}]
@@ -196,10 +198,10 @@ function enhance(){
       for(const p of pend) if(!g.has(p.t)) g.set(p.t,[]);
       return [...g].map(([t,fs])=>({t,fs})).sort((a,b)=>last(b)-last(a)); };
     const last=th=>Math.max(th.fs.length?fnTime(th.fs[th.fs.length-1].name):0,...pend.filter(p=>p.t===th.t).map(p=>p.ms));
-    const titleOf=async th=>{ const p=pend.find(x=>x.t===th.t&&x.title); if(!th.fs.length) return p?p.title:'(기록 중)';
-      const m=await blob(th.fs[0].sha); if(!m) return '(읽을 수 없음)'; return m.title||m.text.split('\\n')[0].slice(0,40); };
-    function bubble(who,ms,text,pending){
-      const el=mk('div','rvmsg '+who+(pending?' pending':'')); el.append(mk('small',null,(who==='a'?'답변':'리뷰')+' · '+kst(ms)+(pending?' · 기록 중':'')),mk('p',null,text)); return el;
+    const headOf=async th=>{ const p=pend.find(x=>x.t===th.t&&x.title); if(!th.fs.length) return p?{title:p.title,name:p.name}:{title:'(기록 중)'};
+      const m=await blob(th.fs[0].sha); if(!m) return {title:'(읽을 수 없음)'}; return {title:m.title||m.text.split('\\n')[0].slice(0,40),name:m.name}; };
+    function bubble(who,ms,text,pending,name){
+      const el=mk('div','rvmsg '+who+(pending?' pending':'')); el.append(mk('small',null,(who==='a'?'답변':'리뷰')+(name?' · '+name:'')+' · '+kst(ms)+(pending?' · 기록 중':'')),mk('p',null,text)); return el;
     }
     async function draw(){
       const inList=cur===null, isNew=cur==='new';
@@ -210,8 +212,9 @@ function enhance(){
         const ths=threads(), rows=await Promise.all(ths.map(async th=>{
           const row=mk('button','rvrow'); row.type='button';
           const lastF=th.fs[th.fs.length-1], waiting=pend.some(p=>p.t===th.t)||(lastF&&lastF.who==='r');
-          row.append(mk('b',null,await titleOf(th)),
-            mk('span',null,th.fs.length+'개 · '+(last(th)?kst(last(th)):'')+' · '+(waiting?'답변 대기':'답변함')));
+          const h=await headOf(th);
+          row.append(mk('b',null,h.title),
+            mk('span',null,(h.name?h.name+' · ':'')+th.fs.length+'개 · '+(last(th)?kst(last(th)):'')+' · '+(waiting?'답변 대기':'답변함')));
           if(waiting) row.classList.add('wait');
           row.addEventListener('click',()=>{ cur=th.t; msg.textContent=''; draw().then(()=>{ log.scrollTop=log.scrollHeight; }); });
           return row; }));
@@ -221,11 +224,11 @@ function enhance(){
       }
       if(isNew){ ttl.textContent='새 스레드'; return; }
       const th=threads().find(x=>x.t===cur)||{t:cur,fs:[]};
-      ttl.textContent=await titleOf(th);
+      ttl.textContent=(await headOf(th)).title;
       const atBottom=log.scrollHeight-log.scrollTop-log.clientHeight<40;
-      const els=await Promise.all(th.fs.map(async f=>{ const m=await blob(f.sha); return m?bubble(f.who,Date.parse(m.at)||fnTime(f.name),m.text):null; }));
+      const els=await Promise.all(th.fs.map(async f=>{ const m=await blob(f.sha); return m?bubble(f.who,Date.parse(m.at)||fnTime(f.name),m.text,false,m.name):null; }));
       log.textContent=''; els.forEach(x=>{ if(x) log.append(x); });
-      pend.filter(p=>p.t===cur).forEach(p=>log.append(bubble('r',p.ms,p.text,true)));
+      pend.filter(p=>p.t===cur).forEach(p=>log.append(bubble('r',p.ms,p.text,true,p.name)));
       if(atBottom) log.scrollTop=log.scrollHeight;
     }
     const refresh=()=>loadTree().then(draw).then(()=>{ if(!pend.length&&/^올렸습니다/.test(msg.textContent)) msg.textContent=''; }).catch(e=>{ msg.textContent='불러오지 못했습니다 — '+e.message; });
@@ -243,18 +246,20 @@ function enhance(){
     const post=(path,o)=>fetch(API+path,{method:'POST',headers:Object.assign(hd('application/vnd.github+json'),{'Content-Type':'application/json'}),body:JSON.stringify(o)})
       .then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); });
     bt.addEventListener('click',async()=>{
-      const text=ta.value.trim(), title=tIn.value.trim();
+      const text=ta.value.trim(), title=tIn.value.trim(), name=nm.value.trim();
+      if(!name){ msg.textContent='작성자 이름을 적어 주세요'; nm.focus(); return; }
       if(!text){ msg.textContent='내용이 비어 있습니다'; return; }
+      try{ localStorage.setItem(NK,name); }catch(_){}
       if(cur==='new'&&!title){ msg.textContent='제목을 적어 주세요'; return; }
       bt.disabled=true; msg.textContent='암호화해서 올리는 중…';
       try{
         const now=new Date().toISOString();
         if(cur==='new'){
-          const j=await post('/issues',{title:'review '+now.slice(0,16).replace('T',' '),body:await seal({v:2,at:now,title,text})});
-          pend.push({t:j.number,id:j.number,text,title,ms:Date.now()}); cur=j.number; tIn.value='';
+          const j=await post('/issues',{title:'review '+now.slice(0,16).replace('T',' '),body:await seal({v:2,at:now,name,title,text})});
+          pend.push({t:j.number,id:j.number,text,title,name,ms:Date.now()}); cur=j.number; tIn.value='';
         }else{
-          const j=await post('/issues/'+cur+'/comments',{body:await seal({v:2,at:now,text})});
-          pend.push({t:cur,id:j.id,text,ms:Date.now()});
+          const j=await post('/issues/'+cur+'/comments',{body:await seal({v:2,at:now,name,text})});
+          pend.push({t:cur,id:j.id,text,name,ms:Date.now()});
         }
         ta.value=''; msg.textContent='올렸습니다 — 1분쯤 뒤 기록되면 고정됩니다';
         await draw(); log.scrollTop=log.scrollHeight;
