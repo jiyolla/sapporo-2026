@@ -1,0 +1,58 @@
+# 페이지에서 올린 리뷰(암호문)를 reviews 브랜치의 파일로 옮긴다.
+# - 페이지 토큰은 이슈 쓰기 권한뿐이라 코드를 바꿀 수 없다. 파일 기록은 이 워크플로만 한다.
+# - 저장소 주인이 연 이슈 · 정해진 형식(머리줄 + base64 세 줄)만 받는다. 그 밖의 내용은 기록하지 않는다.
+# - main 은 건드리지 않는다. 기록 대상은 reviews 브랜치뿐이다.
+name: review-intake
+on:
+  issues:
+    types: [opened]
+permissions: {}
+concurrency:
+  group: review-intake
+  cancel-in-progress: false
+jobs:
+  intake:
+    if: github.event.issue.user.login == github.repository_owner && startsWith(github.event.issue.title, 'review ')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - name: 형식 검사
+        env:
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          b = (os.environ.get('BODY') or '').replace('\r', '').strip('\n')
+          lines = b.split('\n')
+          ok = (len(b) <= 65536 and len(lines) == 4 and lines[0] == 'sapporo-review v1'
+                and all(re.fullmatch(r'[A-Za-z0-9+/]+={0,2}', l) for l in lines[1:]))
+          open('ok', 'w').write('1' if ok else '0')
+          if ok:
+              open('review.txt', 'w').write(b + '\n')
+          PY
+      - name: reviews 브랜치에 기록
+        env:
+          NUM: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$(cat ok)" != 1 ]; then
+            gh issue close "$NUM" -R "$REPO" -r "not planned" -c "형식이 맞지 않아 기록하지 않았습니다."
+            exit 0
+          fi
+          git init -q r && cd r
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          if git fetch -q --depth=1 origin reviews 2>/dev/null; then git checkout -q -B reviews FETCH_HEAD
+          else git checkout -q --orphan reviews; fi
+          mkdir -p reviews
+          f="reviews/$(date -u +%Y%m%d-%H%M%S)-${NUM}.txt"
+          cp ../review.txt "$f"
+          git add "$f"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "review #${NUM}"
+          git push -q origin HEAD:refs/heads/reviews
+          gh issue close "$NUM" -R "$REPO" -c "기록했습니다 — reviews 브랜치 \`$f\`"
