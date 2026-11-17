@@ -3,7 +3,7 @@
 // 비밀번호는 PRIV/password(600) → PW 환경변수 → 숨김 입력 순으로 찾는다.
 const fs = require('fs'), crypto = require('crypto'), path = require('path');
 
-const PRIV = process.env.PRIV || `${process.env.HOME}/home/.sapporo-private`;
+const PRIV = process.env.PRIV || `${process.env.HOME}/personal/.sapporo-private`;
 const SRC = process.env.SRC || `${PRIV}/index.html`;
 const PWFILE = `${PRIV}/password`;
 const ITER = 600000;                       // OWASP 권고치
