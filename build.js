@@ -157,7 +157,10 @@ function enhance(){
     const mk=(t,c,x)=>{const n=document.createElement(t); if(c) n.className=c; if(x!=null) n.textContent=x; return n;};
     // 화면: 위 막대 · 스레드 목록 · 대화 · 입력
     const back=mk('button','rvback','← 목록'), ttl=mk('b','rvttl','스레드'), rf=mk('button','rvr','새로고침');
-    back.type=rf.type='button'; const top=mk('div','rvtop'); top.append(back,ttl,rf);
+    const del=mk('button','rvdel','삭제'); back.type=rf.type=del.type='button'; const top=mk('div','rvtop'); top.append(back,ttl,del,rf);
+    // 스레드 삭제 — 따로 승인은 없고 확인 한 번만 받는다. 이슈를 닫으면 워크플로가 그 스레드 파일을 지운다.
+    const cf=mk('div','rvcf'), cfY=mk('button','rvcfy','삭제'), cfN=mk('button','rvcfn','취소'); cfY.type=cfN.type='button';
+    cf.append(mk('span',null,'이 스레드를 통째로 삭제할까요? 되돌릴 수 없습니다.'),cfY,cfN); cf.hidden=true;
     const listV=mk('div','rvlist'), log=mk('div','rvl');
     const NK='rvname'+location.pathname, nm=mk('input','rvti rvnm'); nm.placeholder='작성자 이름 (스스로 적습니다 · 이 기기에 기억)'; nm.maxLength=30;
     try{ nm.value=localStorage.getItem(NK)||''; }catch(_){}
@@ -172,8 +175,8 @@ function enhance(){
     const msg=mk('p','rvm'); msg.setAttribute('role','status');
     const comp=mk('div','rv'); comp.append(nm,tIn,ta,bt,msg);
     const newB=mk('button','rvnew','+ 새 스레드'); newB.type='button';
-    RV.append(top,listV,log,comp);
-    let tree=[], cur=null, pend=[];   // cur: null=목록 · 'new'=새 스레드 · 숫자=스레드 / pend: [{t,text,title}]
+    RV.append(top,cf,listV,log,comp);
+    let tree=[], cur=null, pend=[]; const gone=new Set();   // gone: 삭제 요청한 스레드 (파일이 지워질 때까지 숨김)   // cur: null=목록 · 'new'=새 스레드 · 숫자=스레드 / pend: [{t,text,title}]
     const blobs=new Map();
     async function dec(body){
       const L=body.replace(/\\r/g,'').trim().split('\\n');
@@ -199,7 +202,7 @@ function enhance(){
       tree.sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0);
       pend=pend.filter(p=>!tree.some(f=>f.t===p.t&&f.name.endsWith('-r'+p.id+'.txt')));
     }
-    const threads=()=>{ const g=new Map(); for(const f of tree){ if(!g.has(f.t)) g.set(f.t,[]); g.get(f.t).push(f); }
+    const threads=()=>{ const g=new Map(); for(const f of tree){ if(gone.has(f.t)) continue; if(!g.has(f.t)) g.set(f.t,[]); g.get(f.t).push(f); }
       for(const p of pend) if(!g.has(p.t)) g.set(p.t,[]);
       return [...g].map(([t,fs])=>({t,fs})).sort((a,b)=>last(b)-last(a)); };
     const last=th=>Math.max(th.fs.length?fnTime(th.fs[th.fs.length-1].name):0,...pend.filter(p=>p.t===th.t).map(p=>p.ms));
@@ -210,6 +213,7 @@ function enhance(){
     }
     async function draw(){
       const inList=cur===null, isNew=cur==='new';
+      del.hidden=inList||isNew; if(inList||isNew) cf.hidden=true;
       back.hidden=inList; listV.hidden=!inList; log.hidden=inList||isNew; comp.hidden=inList;
       tIn.hidden=!isNew; bt.textContent=isNew?'스레드 만들기':'답글 올리기';
       if(inList){
@@ -240,6 +244,19 @@ function enhance(){
     back.addEventListener('click',()=>{ cur=null; msg.textContent=''; draw(); });
     newB.addEventListener('click',()=>{ cur='new'; msg.textContent=''; draw(); tIn.focus(); });
     rf.addEventListener('click',refresh);
+    del.addEventListener('click',()=>{ cf.hidden=false; });
+    cfN.addEventListener('click',()=>{ cf.hidden=true; });
+    cfY.addEventListener('click',async()=>{
+      const t=cur; if(typeof t!=='number') return; cfY.disabled=true;
+      try{
+        const r=await fetch(API+'/issues/'+t,{method:'PATCH',headers:Object.assign(hd('application/vnd.github+json'),{'Content-Type':'application/json'}),
+          body:JSON.stringify({state:'closed',state_reason:'not_planned'})});
+        if(!r.ok) throw new Error('HTTP '+r.status);
+        gone.add(t); pend=pend.filter(p=>p.t!==t); cur=null; cf.hidden=true;
+        msg.textContent='삭제했습니다 — 1분쯤 뒤 완전히 지워집니다'; await draw();
+      }catch(e){ msg.textContent='삭제하지 못했습니다 — '+e.message; }
+      cfY.disabled=false;
+    });
     nm.addEventListener('change',()=>{ if(cur!==null&&cur!=='new') draw(); });
     async function seal(obj){
       const z=new Uint8Array(await pipe(new TextEncoder().encode(JSON.stringify(obj)),new CompressionStream('deflate-raw')));
