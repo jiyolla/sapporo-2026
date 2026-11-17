@@ -300,6 +300,8 @@ function enhance(){
   // 이동 버튼 — 맨 위 · 이전 날 · 다음 날
   const dayEls=$$('.day'), J=document.createElement('div'); J.className='jump';
   const mk=(lab)=>{ const b=document.createElement('button'); b.type='button'; b.setAttribute('aria-label',lab); b.title=lab; J.append(b); return b; };
+  const RVS=$('#review'), bRv=RVS?mk('리뷰 스레드로'):null;   // 리뷰 스레드 바로가기 — 스레드가 화면에 보이면 숨김
+  if(bRv){ bRv.textContent='💬 리뷰'; bRv.addEventListener('click',()=>RVS.scrollIntoView({behavior:'smooth',block:'start'})); }
   const bPrev=mk('이전 날짜로'), bNext=mk('다음 날짜로'), bTop=mk('맨 위로');
   bTop.textContent='▲';
   const tgt=new Map();
@@ -315,6 +317,7 @@ function enhance(){
     let i=-1; dayEls.forEach((d,k)=>{ if(d.getBoundingClientRect().top<=110) i=k; });
     const past=i>=0&&dayEls[i].getBoundingClientRect().bottom<=110;
     put(bPrev,dayEls[past?i:i-1],'↑'); put(bNext,dayEls[i+1],'↓'); bTop.hidden=scrollY<500;
+    if(bRv) bRv.hidden=RVS.getBoundingClientRect().top<innerHeight*0.6;
   };
   addEventListener('scroll',()=>{ if(!raf) raf=requestAnimationFrame(upd); },{passive:true});
   B.append(J); upd();
