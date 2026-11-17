@@ -83,11 +83,13 @@ const P=${P},ALLOW=${JSON.stringify(ALLOW)},
   DENY=['script','iframe','object','embed','base','form','input','button','textarea','select','frame','frameset','applet','portal'];
 const LK='ok'+location.pathname, CK='ck'+location.pathname;   // 경로별 분리 — 같은 origin의 다른 여행 페이지와 안 섞이게
 const d=s=>Uint8Array.from(atob(s),x=>x.charCodeAt(0));
+let K=null;   // 페이지 키 — 리뷰 암호화에도 쓴다 (추출 불가)
 async function unlock(pw){
   const km=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw.normalize('NFC')),'PBKDF2',false,['deriveKey']);
   const k=await crypto.subtle.deriveKey({name:'PBKDF2',salt:d(P.s),iterations:P.n,hash:'SHA-256'},
-    km,{name:'AES-GCM',length:256},false,['decrypt']);
+    km,{name:'AES-GCM',length:256},false,['decrypt','encrypt']);
   const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:d(P.i),tagLength:128},k,d(P.c));
+  K=k;
   return new TextDecoder().decode(pt);
 }
 let done=false;   // 자동 해제와 수동 입력이 겹쳐도 한 번만 그린다
@@ -142,6 +144,36 @@ function enhance(){
     $$('.pin.on').forEach(p=>{ if(p!==pin) p.classList.remove('on'); });
     if(pin) pin.classList.toggle('on');
   });
+  // 리뷰 — 본문을 이 페이지 키로 암호화해 GitHub 이슈로 올린다 (토큰은 이슈 쓰기 권한뿐)
+  const RV=$('#review[data-tk][data-repo]');
+  if(RV&&K){
+    const ta=document.createElement('textarea'); ta.className='rvt'; ta.rows=10;
+    ta.placeholder='리뷰 내용 — 일정 내용을 그대로 써도 됩니다. 암호화해서 올립니다.';
+    const bt=document.createElement('button'); bt.type='button'; bt.className='rvb'; bt.textContent='리뷰 올리기';
+    const msg=document.createElement('p'); msg.className='rvm'; msg.setAttribute('role','status');
+    const box=document.createElement('div'); box.className='rv'; box.append(ta,bt,msg); RV.append(box);
+    const b64=u=>{let s='';for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(s);};
+    bt.addEventListener('click',async()=>{
+      const text=ta.value.trim(); if(!text){msg.textContent='내용이 비어 있습니다';return;}
+      bt.disabled=true; msg.textContent='암호화해서 올리는 중…';
+      try{
+        const doc=new TextEncoder().encode(JSON.stringify({v:1,at:new Date().toISOString(),text}));
+        const z=new Uint8Array(await new Response(new Blob([doc]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer());
+        const iv=crypto.getRandomValues(new Uint8Array(12));
+        const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,tagLength:128},K,z));
+        const body=['sapporo-review v1',P.s,b64(iv),b64(ct)].join(String.fromCharCode(10));
+        if(body.length>65000) throw new Error('too-long');
+        const r=await fetch('https://api.github.com/repos/'+RV.dataset.repo+'/issues',{method:'POST',
+          headers:{'Authorization':'Bearer '+RV.dataset.tk,'Accept':'application/vnd.github+json',
+                   'X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json'},
+          body:JSON.stringify({title:'review '+new Date().toISOString().slice(0,16).replace('T',' '),body})});
+        if(!r.ok) throw new Error('HTTP '+r.status);
+        const j=await r.json(); ta.value='';
+        msg.textContent='올렸습니다 (#'+j.number+') — 1~2분 안에 기록됩니다';
+      }catch(e){ msg.textContent=e.message==='too-long'?'너무 깁니다 — 나눠서 올려 주세요':'올리지 못했습니다 — '+e.message; }
+      bt.disabled=false;
+    });
+  }
   // 지금 모드 — 일본 시각(JST) 기준
   const jst=()=>{ const t=new Date(Date.now()+9*36e5).toISOString(); return [t.slice(0,10),t.slice(11,16)]; };
   const days=(a,b)=>Math.round((Date.parse(b)-Date.parse(a))/864e5);
@@ -219,7 +251,7 @@ F.addEventListener('submit',async ev=>{
 
   const hash = crypto.createHash('sha256').update(SCRIPT, 'utf8').digest('base64');
   const CSP = `default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; ` +
-              `script-src 'sha256-${hash}'; object-src 'none'; base-uri 'none'; form-action 'none'`;
+              `script-src 'sha256-${hash}'; connect-src https://api.github.com; object-src 'none'; base-uri 'none'; form-action 'none'`;
 
   const out = `<!DOCTYPE html>
 <html lang="ko"><head>
@@ -273,6 +305,7 @@ label{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:
   for (const m of txt.matchAll(/\b[A-Z0-9]{2}\d{3,4}\b/g)) tokens.add(m[0]);         // 편명
   for (const m of txt.matchAll(/\d{2,4}-\d{3,4}-\d{4}/g)) tokens.add(m[0]);           // 전화번호
   for (const m of txt.matchAll(/[A-Za-z]{4,}(?:\s+[A-Za-z]{2,}){2,}/g)) tokens.add(m[0]); // 영문 주소류
+  for (const m of txt.matchAll(/github_pat_[A-Za-z0-9_]{20,}/g)) tokens.add(m[0]);   // 리뷰 토큰
   tokens.add(pw);                                                                     // 비밀번호 자체
   // 로더 템플릿(=이 스크립트)과 공유하는 문자열은 보일러플레이트이므로 표본에서 뺀다
   const boiler = fs.readFileSync(__filename, 'utf8');
