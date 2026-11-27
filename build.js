@@ -341,6 +341,7 @@ function enhance(){
     $$('.toc-p a',T).forEach(a=>a.addEventListener('click',ev=>{
       const id=a.getAttribute('href').slice(1), t=id==='top'?null:document.getElementById(id);
       ev.preventDefault();
+      const dd=t&&t.querySelector('details'); if(dd) dd.open=true;   // 접힌 섹션은 목차로 가면 펼친다
       if(t) t.scrollIntoView({behavior:'smooth',block:'start'}); else scrollTo({top:0,behavior:'smooth'});
       if(T.classList.contains('open')) setOpen(false);
     }));
