@@ -378,6 +378,78 @@ function enhance(){
   // 지금 모드 — 일본 시각(JST) 기준
   const jst=()=>{ const t=new Date(Date.now()+9*36e5).toISOString(); return [t.slice(0,10),t.slice(11,16)]; };
   const days=(a,b)=>Math.round((Date.parse(b)-Date.parse(a))/864e5);
+  // 날씨 예보 — 날짜가 7일 안(JST)으로 들어온 날만 Open-Meteo 에서 불러온다. 그 전엔 요청하지 않는다. 실패하면 아무것도 안 보인다.
+  // 날짜 머리 .day[data-wx="위도,경도"] → 머리글에 예보 한 줄. 카드 경고 .wxw[data-wxp][data-wxf][data-wxt][data-wxc] → 숨겨 둔 줄을
+  // 예보가 조건을 넘을 때만 보인다 (fr 초과 ~ to 이하 1시간 강설 합 snow(cm) · 평균 풍속 최대 wind · 순간 풍속 최대 gust (m/s), | 또는 & 그리고).
+  // 값은 일본 기상청 모델(jma_seamless)을 먼저 쓰고, 그 모델에 없는 값(강수 확률 · 순간 풍속 · 먼 날)은 best_match 로 채운다.
+  (()=>{
+    const [ymd]=jst(), inW=x=>{ const dd=x.closest('.day'), n=dd?days(ymd,dd.dataset.date):-1; return n>=0&&n<=7; };
+    const hd=$$('.day[data-date][data-wx]').filter(inW), ws=$$('.wxw[data-wxp][data-wxf][data-wxt][data-wxc]').filter(inW);
+    if(!hd.length&&!ws.length) return;
+    const locs=[...new Set([...hd.map(x=>x.dataset.wx),...ws.map(x=>x.dataset.wxp)])].sort();
+    const ds=[...hd.map(x=>x.dataset.date),...ws.flatMap(x=>[x.dataset.wxf.slice(0,10),x.dataset.wxt.slice(0,10)])].sort();
+    const q=new URLSearchParams({latitude:locs.map(l=>l.split(',')[0]).join(','),longitude:locs.map(l=>l.split(',')[1]).join(','),
+      daily:'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,snowfall_sum',
+      hourly:'snowfall,wind_speed_10m,wind_gusts_10m',models:'jma_seamless,best_match',wind_speed_unit:'ms',timezone:'Asia/Tokyo',
+      start_date:ds[0],end_date:ds[ds.length-1]});
+    const url='https://api.open-meteo.com/v1/forecast?'+q, WK='wx'+location.pathname;
+    const load=async()=>{
+      try{ const c=JSON.parse(sessionStorage.getItem(WK)||'null'); if(c&&c.u===url&&Date.now()-c.t<36e5) return c.j; }catch(_){}
+      const r=await fetch(url,{cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer'}); if(!r.ok) throw new Error('HTTP '+r.status);
+      const j=await r.json(), a=Array.isArray(j)?j:[j]; if(a.length!==locs.length||a.some(o=>!o||!o.daily||!o.hourly)) throw new Error('shape');
+      try{ sessionStorage.setItem(WK,JSON.stringify({u:url,t:Date.now(),j:a})); }catch(_){}
+      return a;
+    };
+    const pick=(o,k,i)=>{ for(const m of ['_jma_seamless','_best_match']){ const v=o[k+m]; if(v&&typeof v[i]==='number') return v[i]; } return null; };
+    const deg=n=>{ const r=Math.round(n); return r<0?'−'+(-r):String(r); };
+    const sky=(c,hi,mm,cm)=>{   // [그림, 말] — 눈 · 비가 같이 오면 진눈깨비(낮 최고 3℃ 이하) 또는 눈·비
+      const sn=(cm||0)>=.5, wet=Math.max(0,(mm||0)-(cm||0)/.7)>=1;   // Open-Meteo: 눈 7cm ≈ 물 10mm
+      if(sn&&wet) return hi!=null&&hi<=3?['🌨','진눈깨비',1]:['🌨','눈·비',1];
+      if(sn||(c>=71&&c<=77)||c===85||c===86) return ['🌨','눈',1];
+      if(c>=95) return ['⛈','뇌우',1];
+      if(c===56||c===57||c===66||c===67) return ['🌧','어는 비',1];
+      if((c>=61&&c<=65)||(c>=80&&c<=82)) return ['🌧','비',1];
+      if(c>=51&&c<=55) return ['🌦','약한 비',1];
+      if(c===45||c===48) return ['🌫','안개',0];
+      if(c===3) return ['☁️','흐림',0];
+      if(c===1||c===2) return ['⛅','구름 조금',0];
+      return ['☀️','맑음',0];
+    };
+    const mk=(t,c,x)=>{ const n=document.createElement(t); if(c) n.className=c; if(x!=null) n.textContent=x; return n; };
+    const test=(c,M)=>c.split('|').some(g=>g.split('&').every(t=>{ const m=/^(snow|wind|gust)>=(\\d+(?:\\.\\d+)?)$/.exec(t.trim());
+      return !!m&&M[m[1]]!=null&&M[m[1]]>=+m[2]; }));
+    load().then(a=>{
+      const at=l=>a[locs.indexOf(l)];
+      const line=day=>{ let p=$('.wxf',day); if(!p){ p=mk('p','wxf'); const dl=$('.dh .dl',day); if(!dl) return null; dl.after(p); } return p; };
+      for(const day of hd){
+        const o=at(day.dataset.wx), D=o&&o.daily, i=D&&D.time?D.time.indexOf(day.dataset.date):-1; if(i<0) continue;
+        const lo=pick(D,'temperature_2m_min',i), hi=pick(D,'temperature_2m_max',i); if(lo==null||hi==null) continue;
+        const c=pick(D,'weather_code',i), pp=pick(D,'precipitation_probability_max',i), mm=pick(D,'precipitation_sum',i), cm=pick(D,'snowfall_sum',i);
+        const [ic,w,wet]=sky(c,hi,mm,cm);
+        let s=ic+' '+deg(lo)+' / '+deg(hi)+'℃ · '+w;
+        if(wet&&pp!=null) s+=' '+Math.round(pp)+'%'; else if(!wet&&pp!=null&&pp>=30) s+=' · 강수 '+Math.round(pp)+'%';
+        if(cm!=null&&cm>=1) s+=' ('+Math.round(cm)+'cm)';
+        const p=line(day); if(!p) continue; p.textContent=''; p.append(mk('small',null,'예보'),mk('span',null,s));
+      }
+      for(const el of ws){
+        const o=at(el.dataset.wxp), H=o&&o.hourly, T=H&&H.time||[], fr=el.dataset.wxf, to=el.dataset.wxt;
+        let snow=0,n=0,wind=null,gust=null;
+        T.forEach((x,i)=>{ if(x<fr||x>to) return;
+          const s=pick(H,'snowfall',i), w=pick(H,'wind_speed_10m',i), g=pick(H,'wind_gusts_10m',i);
+          if(x>fr&&s!=null){ snow+=s; n++; }
+          if(w!=null) wind=wind==null?w:Math.max(wind,w); if(g!=null) gust=gust==null?g:Math.max(gust,g); });
+        const M={snow:n?snow:null,wind,gust}; if(!test(el.dataset.wxc,M)) continue;
+        const v=[]; if(/snow/.test(el.dataset.wxc)&&M.snow!=null) v.push('눈 '+Math.round(M.snow)+'cm');
+        if(/wind/.test(el.dataset.wxc)&&M.wind!=null) v.push('바람 '+Math.round(M.wind)+'m/s');
+        if(/gust/.test(el.dataset.wxc)&&M.gust!=null) v.push('순간 '+Math.round(M.gust)+'m/s');
+        $$('.wxv',el).forEach(x=>x.remove());
+        el.append(mk('span','wxv','예보 '+fr.slice(11)+'~'+to.slice(11)+' · '+v.join(' · ')));
+        el.hidden=false;
+        const day=el.closest('.day'), it=el.closest('.it'), p=day&&line(day);
+        if(p&&it&&it.id&&!$('a.wxa',p)){ const m=mk('a','wxa','⚠ 날씨 대안 보기'); m.href='#'+it.id; p.append(m); }
+      }
+    }).catch(()=>{});
+  })();
   let first=true;
   function tick(){
     const [ymd,hm]=jst(), dd=$('#dday');
@@ -469,7 +541,7 @@ F.addEventListener('submit',async ev=>{
 
   const hash = crypto.createHash('sha256').update(SCRIPT, 'utf8').digest('base64');
   const CSP = `default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; ` +
-              `script-src 'sha256-${hash}'; connect-src https://api.github.com; object-src 'none'; base-uri 'none'; form-action 'none'`;
+              `script-src 'sha256-${hash}'; connect-src https://api.github.com https://api.open-meteo.com; object-src 'none'; base-uri 'none'; form-action 'none'`;
 
   const out = `<!DOCTYPE html>
 <html lang="ko"><head>
