@@ -304,11 +304,11 @@ function enhance(){
       else dd.textContent='';
     }
     $$('.it.now,.it.next').forEach(n=>n.classList.remove('now','next'));
-    $$('.day.today,.dn a.today').forEach(n=>n.classList.remove('today'));
+    $$('.day.today,.toc a.today').forEach(n=>n.classList.remove('today'));
     const day=$('.day[data-date="'+ymd+'"]'); let bar=$('.nowbar');
     if(!day){ if(bar) bar.remove(); return; }
     day.classList.add('today');
-    const na=$('.dn a[href="#'+day.id+'"]'); if(na) na.classList.add('today');
+    const na=$('.toc a[href="#'+day.id+'"]'); if(na) na.classList.add('today');
     let cur=null,nxt=null;
     for(const it of $$('.it[data-t]',day)){ if(it.dataset.t<=hm) cur=it; else { nxt=it; break; } }
     if(cur) cur.classList.add('now'); if(nxt) nxt.classList.add('next');
@@ -325,30 +325,37 @@ function enhance(){
     if(first&&!location.hash){ first=false; const t=cur||nxt; if(t) setTimeout(()=>t.scrollIntoView({block:'center'}),60); }
     first=false;
   }
-  // 이동 버튼 — 맨 위 · 이전 날 · 다음 날
-  const dayEls=$$('.day'), J=document.createElement('div'); J.className='jump';
-  const mk=(lab)=>{ const b=document.createElement('button'); b.type='button'; b.setAttribute('aria-label',lab); b.title=lab; J.append(b); return b; };
-  const RVS=$('#review'), bRv=RVS?mk('리뷰 스레드로'):null;   // 리뷰 스레드 바로가기 — 스레드가 화면에 보이면 숨김
-  if(bRv){ bRv.textContent='💬 리뷰'; bRv.addEventListener('click',()=>RVS.scrollIntoView({behavior:'smooth',block:'start'})); }
-  const bPrev=mk('이전 날짜로'), bNext=mk('다음 날짜로'), bTop=mk('맨 위로');
-  bTop.textContent='▲';
-  const tgt=new Map();
-  [bPrev,bNext].forEach(b=>b.addEventListener('click',()=>{ const d=tgt.get(b); if(d) d.scrollIntoView({behavior:'smooth',block:'start'}); }));
-  bTop.addEventListener('click',()=>scrollTo({top:0,behavior:'smooth'}));
-  const put=(b,d,arrow)=>{
-    tgt.set(b,d); b.hidden=!d; if(!d) return;
-    b.textContent=''; const x=document.createElement('b'); x.textContent='D'+d.id.slice(1);
-    b.append(arrow+' ',x); b.style.setProperty('--c',d.style.getPropertyValue('--c'));
-  };
-  let raf=0;
-  const upd=()=>{ raf=0;
-    let i=-1; dayEls.forEach((d,k)=>{ if(d.getBoundingClientRect().top<=110) i=k; });
-    const past=i>=0&&dayEls[i].getBoundingClientRect().bottom<=110;
-    put(bPrev,dayEls[past?i:i-1],'↑'); put(bNext,dayEls[i+1],'↓'); bTop.hidden=scrollY<500;
-    if(bRv) bRv.hidden=RVS.getBoundingClientRect().top<innerHeight*0.6;
-  };
-  addEventListener('scroll',()=>{ if(!raf) raf=requestAnimationFrame(upd); },{passive:true});
-  B.append(J); upd();
+  // 목차 — 지금 보고 있는 섹션을 강조. 넓은 화면은 늘 보이고, 좁은 화면은 스크롤할 때만 버튼이 떴다가 2초 뒤 숨는다
+  const T=$('.toc');
+  if(T){
+    const links=$$('.toc-p a[data-s]',T), secs=links.map(a=>document.getElementById(a.getAttribute('href').slice(1)));
+    const btn=document.createElement('button'), curL=document.createElement('span'), wide=matchMedia('(min-width:1280px)');
+    btn.type='button'; btn.className='toc-b'; btn.setAttribute('aria-expanded','false'); btn.setAttribute('aria-controls','toc-p');
+    curL.className='toc-cur'; curL.textContent='목차'; btn.append(curL,' ☰'); T.append(btn);
+    let hideT=0, raf=0;
+    const show=ms=>{ T.classList.remove('hide'); clearTimeout(hideT);
+      if(!wide.matches&&!T.classList.contains('open')) hideT=setTimeout(()=>T.classList.add('hide'),ms); };
+    const setOpen=o=>{ T.classList.toggle('open',o); btn.setAttribute('aria-expanded',String(o)); show(2000); };
+    btn.addEventListener('click',()=>setOpen(!T.classList.contains('open')));
+    document.addEventListener('click',ev=>{ if(T.classList.contains('open')&&!T.contains(ev.target)) setOpen(false); });
+    $$('.toc-p a',T).forEach(a=>a.addEventListener('click',ev=>{
+      const id=a.getAttribute('href').slice(1), t=id==='top'?null:document.getElementById(id);
+      ev.preventDefault();
+      if(t) t.scrollIntoView({behavior:'smooth',block:'start'}); else scrollTo({top:0,behavior:'smooth'});
+      if(T.classList.contains('open')) setOpen(false);
+    }));
+    const spy=()=>{ raf=0;
+      let k=-1; secs.forEach((x,i)=>{ if(x&&x.getBoundingClientRect().top<=innerHeight*0.3) k=i; });
+      if(innerHeight+scrollY>=document.documentElement.scrollHeight-4) k=secs.length-1;
+      links.forEach((a,i)=>a.classList.toggle('on',i===k));
+      curL.textContent=k>=0?links[k].dataset.s:'목차';
+      if(k>=0&&wide.matches){ const a=links[k], r=a.getBoundingClientRect(), R=T.getBoundingClientRect();
+        if(r.top<R.top||r.bottom>R.bottom) T.scrollTop+=r.top-R.top-R.height/2; }
+    };
+    addEventListener('scroll',()=>{ if(!raf) raf=requestAnimationFrame(spy); show(2000); },{passive:true});
+    wide.addEventListener('change',()=>{ setOpen(false); show(3000); });
+    spy(); show(3000);
+  }
   tick(); setInterval(tick,30000);
   document.addEventListener('visibilitychange',()=>{ if(!document.hidden) tick(); });
   if(location.hash){ const t=document.getElementById(location.hash.slice(1)); if(t) t.scrollIntoView(); }
