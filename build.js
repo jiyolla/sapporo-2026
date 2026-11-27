@@ -153,7 +153,7 @@ function enhance(){
   });
   // 날짜 약도 — 좁은 화면에선 이름표가 작으니, 약도를 누르면 전체 화면으로 연다 (데스크톱 이름표 그대로 · 밀어서 이동 · 두 손가락 확대).
   // ✕ · 뒤로 가기 · Esc 로 닫는다. 안에서 이름표 → 닫고 그 일정 카드로, 옆의 동그란 버튼 → 구글맵 (새 탭)
-  const narrow=matchMedia('(max-width:640px)');
+  const narrow=matchMedia('(max-width:640px)'), MV0=.95;   // MV0 = 처음 열 때 약도 폭 ÷ 원래 폭 (이름표 글자 약 12px)
   let mv=null;
   const mvOpen=(box,ev)=>{
     const src=$('svg.ov-d',box), img=$('img',box); if(!src||!img) return;
@@ -168,7 +168,7 @@ function enhance(){
     const minW=()=>Math.min(innerWidth,innerHeight*W/H), maxW=W*2.6;   // 가장 작게 = 화면에 통째로 · 가장 크게 = 데스크톱의 2.6배
     let cw=0;
     const size=w=>{ cw=Math.min(maxW,Math.max(minW(),w)); c.style.width=cw+'px'; };
-    size(Math.min(W*1.6,Math.max(W,innerWidth,innerHeight*W/H)));   // 처음 = 화면 높이를 채우게 (글자는 데스크톱의 1~1.6배)
+    size(W*MV0);   // 처음 = 이름표 글자가 데스크톱(12.5px)의 0.95배 · 그보다 화면이 크면 화면에 통째로
     sc.scrollLeft=fx*cw-innerWidth/2; sc.scrollTop=fy*cw*H/W-innerHeight/2;   // 누른 자리를 가운데로
     fitLabels(c);
     // 두 손가락 확대 — 브라우저 확대는 막고(touch-action) 약도 폭을 바꾼 뒤, 두 손가락 가운데 점이 그 자리에 머물게 스크롤을 맞춘다
@@ -194,9 +194,17 @@ function enhance(){
     ov.close=close; mv=ov; history.pushState({mv:1},''); x.focus({preventScroll:true});
   };
   addEventListener('popstate',()=>{ if(mv) mv.close(); });
-  document.addEventListener('click',ev=>{   // 좁은 화면의 날짜 약도 — 링크로 가지 않고 전체 화면으로. 약도 위 '눌러서 크게 보기'도 같다 (약도 가운데로 연다)
+  // 좁은 화면 — 날짜 약도 오른쪽 아래 구석에 '크게 보기' 버튼 (모양 · 보이는 폭은 CSS .mvb · 그 구석은 이름표가 비켜 있다). 뷰어엔 복사되지 않는다
+  const NS='http://www.w3.org/2000/svg';
+  $$('.map .mapbox').forEach(box=>{
+    const b=document.createElement('button'); b.type='button'; b.className='mvb'; b.setAttribute('aria-label','약도 크게 보기');
+    const ic=document.createElementNS(NS,'svg'), pa=document.createElementNS(NS,'path'); ic.setAttribute('viewBox','0 0 24 24'); ic.setAttribute('aria-hidden','true');
+    [['d','M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5'],['fill','none'],['stroke','currentColor'],['stroke-width','2.4'],['stroke-linecap','round'],['stroke-linejoin','round']].forEach(([k,v])=>pa.setAttribute(k,v));
+    ic.append(pa); b.append(ic); box.append(b);
+  });
+  document.addEventListener('click',ev=>{   // 좁은 화면의 날짜 약도 — 링크로 가지 않고 전체 화면으로 (누른 자리를 가운데로). 구석 버튼은 약도 가운데로 연다
     if(!narrow.matches||!ev.target.closest) return;
-    const h=ev.target.closest('.map .mvh'), fg=h&&h.closest('figure'), box=h?fg&&$('.mapbox',fg):ev.target.closest('.map .mapbox'); if(!box) return;
+    const h=ev.target.closest('.map .mvb'), box=ev.target.closest('.map .mapbox'); if(!box) return;
     ev.preventDefault(); ev.stopPropagation();
     if(h){ const r=box.getBoundingClientRect(); mvOpen(box,{clientX:r.left+r.width/2,clientY:r.top+r.height/2}); } else mvOpen(box,ev);
   },true);
