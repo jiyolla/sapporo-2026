@@ -136,11 +136,12 @@ function enhance(){
     set(); li.addEventListener('click',tg);
     li.addEventListener('keydown',ev=>{ if(ev.key===' '||ev.key==='Enter'){ev.preventDefault();tg();} });
   });
-  // 지도 이름표 — 기기 글꼴이 예상보다 넓으면(안드로이드 · 윈도우 등) 글자를 구글맵 아이콘 앞까지만 눌러 담는다
+  // 날짜 약도 이름표 — 기기 글꼴이 예상보다 넓으면(안드로이드 · 윈도우 등) 글자를 이름표 안쪽 오른쪽 끝까지만 눌러 담는다
   const fitLabels=r=>$$('.mapbox svg .pin',r).forEach(g=>{
-    const u=$('use[href="#gmi"]',g), t=g.querySelector('text:last-of-type'); if(!u||!t||t.hasAttribute('textLength')) return;
+    const pl=g.querySelector('a.pcl rect.pl:not(.pb)'), t=g.querySelector('a.pcl text:last-of-type');
+    if(!pl||!g.querySelector('a.gmb')||!t||t.hasAttribute('textLength')) return;
     const len=t.getComputedTextLength(), b=t.getBBox(); if(!(len>0&&b.width>0)) return;   // 숨은 지도(모바일 · 데스크톱 반대편)는 건너뛴다
-    const edge=+u.getAttribute('x')-3, over=Math.max(b.x+b.width-edge, len-(edge-+t.getAttribute('x')));
+    const edge=+pl.getAttribute('x')+ +pl.getAttribute('width')-pl.getAttribute('height')*.3, over=Math.max(b.x+b.width-edge, len-(edge-+t.getAttribute('x')));
     if(over>0){ t.setAttribute('textLength',(len-over).toFixed(1)); t.setAttribute('lengthAdjust','spacingAndGlyphs'); }
   });
   fitLabels(); let fitT=0; addEventListener('resize',()=>{ clearTimeout(fitT); fitT=setTimeout(()=>fitLabels(),150); },{passive:true});
@@ -151,7 +152,7 @@ function enhance(){
     if(pin) pin.classList.toggle('on');
   });
   // 날짜 약도 — 좁은 화면에선 이름표가 작으니, 약도를 누르면 전체 화면으로 연다 (데스크톱 이름표 그대로 · 밀어서 이동 · 두 손가락 확대).
-  // ✕ · 뒤로 가기 · Esc 로 닫는다. 안에서 이름표 → 닫고 그 일정 카드로, 아이콘 → 구글맵 (새 탭)
+  // ✕ · 뒤로 가기 · Esc 로 닫는다. 안에서 이름표 → 닫고 그 일정 카드로, 옆의 동그란 버튼 → 구글맵 (새 탭)
   const narrow=matchMedia('(max-width:640px)');
   let mv=null;
   const mvOpen=(box,ev)=>{
@@ -193,9 +194,11 @@ function enhance(){
     ov.close=close; mv=ov; history.pushState({mv:1},''); x.focus({preventScroll:true});
   };
   addEventListener('popstate',()=>{ if(mv) mv.close(); });
-  document.addEventListener('click',ev=>{   // 좁은 화면의 날짜 약도 — 링크로 가지 않고 전체 화면으로
-    const box=narrow.matches&&ev.target.closest&&ev.target.closest('.map .mapbox'); if(!box) return;
-    ev.preventDefault(); ev.stopPropagation(); mvOpen(box,ev);
+  document.addEventListener('click',ev=>{   // 좁은 화면의 날짜 약도 — 링크로 가지 않고 전체 화면으로. 약도 위 '눌러서 크게 보기'도 같다 (약도 가운데로 연다)
+    if(!narrow.matches||!ev.target.closest) return;
+    const h=ev.target.closest('.map .mvh'), fg=h&&h.closest('figure'), box=h?fg&&$('.mapbox',fg):ev.target.closest('.map .mapbox'); if(!box) return;
+    ev.preventDefault(); ev.stopPropagation();
+    if(h){ const r=box.getBoundingClientRect(); mvOpen(box,{clientX:r.left+r.width/2,clientY:r.top+r.height/2}); } else mvOpen(box,ev);
   },true);
   // 일본어 보여 주기 — 문장(.jaj)을 누르면 흰 화면 가득 크게 띄운다. 아무 데나 누르거나 Esc 로 닫는다
   const jaOpen=el=>{
