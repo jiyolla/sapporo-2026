@@ -137,19 +137,66 @@ function enhance(){
     li.addEventListener('keydown',ev=>{ if(ev.key===' '||ev.key==='Enter'){ev.preventDefault();tg();} });
   });
   // 지도 이름표 — 기기 글꼴이 예상보다 넓으면(안드로이드 · 윈도우 등) 글자를 구글맵 아이콘 앞까지만 눌러 담는다
-  const fitLabels=()=>$$('.mapbox svg a .pin').forEach(g=>{
+  const fitLabels=r=>$$('.mapbox svg .pin',r).forEach(g=>{
     const u=$('use[href="#gmi"]',g), t=g.querySelector('text:last-of-type'); if(!u||!t||t.hasAttribute('textLength')) return;
     const len=t.getComputedTextLength(), b=t.getBBox(); if(!(len>0&&b.width>0)) return;   // 숨은 지도(모바일 · 데스크톱 반대편)는 건너뛴다
     const edge=+u.getAttribute('x')-3, over=Math.max(b.x+b.width-edge, len-(edge-+t.getAttribute('x')));
     if(over>0){ t.setAttribute('textLength',(len-over).toFixed(1)); t.setAttribute('lengthAdjust','spacingAndGlyphs'); }
   });
-  fitLabels(); let fitT=0; addEventListener('resize',()=>{ clearTimeout(fitT); fitT=setTimeout(fitLabels,150); },{passive:true});
+  fitLabels(); let fitT=0; addEventListener('resize',()=>{ clearTimeout(fitT); fitT=setTimeout(()=>fitLabels(),150); },{passive:true});
   // 지도 핀 — 터치 기기는 hover 가 없으니 탭으로 이름표를 연다
   document.addEventListener('click',ev=>{
     const pin=ev.target.closest&&ev.target.closest('.pin');
     $$('.pin.on').forEach(p=>{ if(p!==pin) p.classList.remove('on'); });
     if(pin) pin.classList.toggle('on');
   });
+  // 날짜 약도 — 좁은 화면에선 이름표가 작으니, 약도를 누르면 전체 화면으로 연다 (데스크톱 이름표 그대로 · 밀어서 이동 · 두 손가락 확대).
+  // ✕ · 뒤로 가기 · Esc 로 닫는다. 안에서 이름표 → 닫고 그 일정 카드로, 아이콘 → 구글맵 (새 탭)
+  const narrow=matchMedia('(max-width:640px)');
+  let mv=null;
+  const mvOpen=(box,ev)=>{
+    const src=$('svg.ov-d',box), img=$('img',box); if(!src||!img) return;
+    const VB=src.viewBox.baseVal, W=VB.width, H=VB.height, r0=box.getBoundingClientRect();
+    const fx=Math.min(1,Math.max(0,(ev.clientX-r0.left)/r0.width)), fy=Math.min(1,Math.max(0,(ev.clientY-r0.top)/r0.height));
+    const ov=document.createElement('div'); ov.className='mv'; ov.setAttribute('role','dialog'); ov.setAttribute('aria-modal','true'); ov.setAttribute('aria-label','약도 크게 보기');
+    const sc=document.createElement('div'); sc.className='mv-s';
+    const c=document.createElement('div'); c.className='mapbox mv-c'; c.style.aspectRatio=W+'/'+H;
+    const im=img.cloneNode(); im.loading='eager'; c.append(im,src.cloneNode(true)); sc.append(c);
+    const x=document.createElement('button'); x.type='button'; x.className='mv-x'; x.setAttribute('aria-label','닫기'); x.textContent='✕';
+    ov.append(sc,x); B.append(ov);
+    const minW=()=>Math.min(innerWidth,innerHeight*W/H), maxW=W*2.6;   // 가장 작게 = 화면에 통째로 · 가장 크게 = 데스크톱의 2.6배
+    let cw=0;
+    const size=w=>{ cw=Math.min(maxW,Math.max(minW(),w)); c.style.width=cw+'px'; };
+    size(Math.min(W*1.6,Math.max(W,innerWidth,innerHeight*W/H)));   // 처음 = 화면 높이를 채우게 (글자는 데스크톱의 1~1.6배)
+    sc.scrollLeft=fx*cw-innerWidth/2; sc.scrollTop=fy*cw*H/W-innerHeight/2;   // 누른 자리를 가운데로
+    fitLabels(c);
+    // 두 손가락 확대 — 브라우저 확대는 막고(touch-action) 약도 폭을 바꾼 뒤, 두 손가락 가운데 점이 그 자리에 머물게 스크롤을 맞춘다
+    let p0=null;
+    const mid=t=>({x:(t[0].clientX+t[1].clientX)/2,y:(t[0].clientY+t[1].clientY)/2,d:Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY)});
+    sc.addEventListener('touchstart',e=>{ if(e.touches.length!==2) return; const m=mid(e.touches), R=c.getBoundingClientRect();
+      p0={w:cw,d:m.d||1,u:(m.x-R.left)/R.width,v:(m.y-R.top)/R.height}; },{passive:true});
+    sc.addEventListener('touchmove',e=>{ if(!p0||e.touches.length!==2) return; e.preventDefault();
+      const m=mid(e.touches); size(p0.w*m.d/p0.d);
+      const R=c.getBoundingClientRect(); sc.scrollLeft+=R.left+p0.u*R.width-m.x; sc.scrollTop+=R.top+p0.v*R.height-m.y; },{passive:false});
+    sc.addEventListener('touchend',e=>{ if(e.touches.length<2){ if(p0) fitLabels(c); p0=null; } },{passive:true});
+    sc.addEventListener('gesturestart',e=>e.preventDefault());   // iOS 사파리 화면 확대 막기
+    const close=()=>{ if(mv!==ov) return; mv=null; ov.remove(); document.removeEventListener('keydown',esc,true); };
+    const shut=()=>{ if(history.state&&history.state.mv) history.back(); else close(); };   // 열 때 기록을 하나 넣었으니 뒤로 가기로 닫는다
+    const esc=e=>{ if(e.key==='Escape'){ e.preventDefault(); shut(); } };
+    x.addEventListener('click',shut); document.addEventListener('keydown',esc,true);
+    // 이름표 → 닫고 그 일정 카드로. 뷰어 기록 자리를 그 카드 주소로 바꿔 끼운다 (뒤로 가기 = 데스크톱에서 누른 것과 같다).
+    // history.back() 뒤에 옮기면 브라우저의 스크롤 복원이 이동을 덮어쓴다
+    ov.addEventListener('click',e=>{ const a=e.target.closest&&e.target.closest('a[href^="#"]'); if(!a) return; e.preventDefault();
+      const t=document.getElementById(decodeURIComponent(a.getAttribute('href').slice(1))), ours=history.state&&history.state.mv; close(); if(!t) return;
+      if(location.hash==='#'+t.id){ if(ours) history.replaceState(null,''); t.scrollIntoView({behavior:'smooth',block:'start'}); }
+      else if(ours) location.replace('#'+t.id); else location.hash=t.id; });
+    ov.close=close; mv=ov; history.pushState({mv:1},''); x.focus({preventScroll:true});
+  };
+  addEventListener('popstate',()=>{ if(mv) mv.close(); });
+  document.addEventListener('click',ev=>{   // 좁은 화면의 날짜 약도 — 링크로 가지 않고 전체 화면으로
+    const box=narrow.matches&&ev.target.closest&&ev.target.closest('.map .mapbox'); if(!box) return;
+    ev.preventDefault(); ev.stopPropagation(); mvOpen(box,ev);
+  },true);
   // 일본어 보여 주기 — 문장(.jaj)을 누르면 흰 화면 가득 크게 띄운다. 아무 데나 누르거나 Esc 로 닫는다
   const jaOpen=el=>{
     const li=el.closest('li'), k=li&&li.querySelector('.jak');
