@@ -345,7 +345,7 @@ function enhance(){
       if(T.classList.contains('open')) setOpen(false);
     }));
     const spy=()=>{ raf=0;
-      let k=-1; secs.forEach((x,i)=>{ if(x&&x.getBoundingClientRect().top<=innerHeight*0.3) k=i; });
+      let k=-1; secs.forEach((x,i)=>{ if(x&&x.getBoundingClientRect().top<=48) k=i; });
       if(innerHeight+scrollY>=document.documentElement.scrollHeight-4) k=secs.length-1;
       links.forEach((a,i)=>a.classList.toggle('on',i===k));
       curL.textContent=k>=0?links[k].dataset.s:'목차';
