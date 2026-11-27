@@ -136,6 +136,14 @@ function enhance(){
     set(); li.addEventListener('click',tg);
     li.addEventListener('keydown',ev=>{ if(ev.key===' '||ev.key==='Enter'){ev.preventDefault();tg();} });
   });
+  // 지도 이름표 — 기기 글꼴이 예상보다 넓으면(안드로이드 · 윈도우 등) 글자를 구글맵 아이콘 앞까지만 눌러 담는다
+  const fitLabels=()=>$$('.mapbox svg a .pin').forEach(g=>{
+    const u=$('use[href="#gmi"]',g), t=g.querySelector('text:last-of-type'); if(!u||!t||t.hasAttribute('textLength')) return;
+    const len=t.getComputedTextLength(), b=t.getBBox(); if(!(len>0&&b.width>0)) return;   // 숨은 지도(모바일 · 데스크톱 반대편)는 건너뛴다
+    const edge=+u.getAttribute('x')-3, over=Math.max(b.x+b.width-edge, len-(edge-+t.getAttribute('x')));
+    if(over>0){ t.setAttribute('textLength',(len-over).toFixed(1)); t.setAttribute('lengthAdjust','spacingAndGlyphs'); }
+  });
+  fitLabels(); let fitT=0; addEventListener('resize',()=>{ clearTimeout(fitT); fitT=setTimeout(fitLabels,150); },{passive:true});
   // 지도 핀 — 터치 기기는 hover 가 없으니 탭으로 이름표를 연다
   document.addEventListener('click',ev=>{
     const pin=ev.target.closest&&ev.target.closest('.pin');
