@@ -314,7 +314,8 @@ function enhance(){
     if(cur) cur.classList.add('now'); if(nxt) nxt.classList.add('next');
     if(!bar){
       bar=document.createElement('div'); bar.className='nowbar'; bar.setAttribute('role','button');
-      bar.addEventListener('click',()=>{ const t=$('.it.now')||$('.it.next'); if(t) t.scrollIntoView({behavior:'smooth',block:'center'}); });
+      bar.addEventListener('click',()=>{ const t=$('.it.now')||$('.it.next'); if(t) t.scrollIntoView({behavior:'smooth',block:'center'});
+        history.replaceState(null,'',location.pathname+location.search); });   // 다음 새로 고침은 다시 「지금」으로
       B.append(bar);
     }
     const nm=n=>{ const t=n&&$('.tt',n); return t?t.textContent:''; };
@@ -343,6 +344,7 @@ function enhance(){
       ev.preventDefault();
       const dd=t&&t.querySelector('details'); if(dd) dd.open=true;   // 접힌 섹션은 목차로 가면 펼친다
       if(t) t.scrollIntoView({behavior:'smooth',block:'start'}); else scrollTo({top:0,behavior:'smooth'});
+      history.replaceState(null,'',t?'#'+id:location.pathname+location.search);   // 주소에 남겨 새로 고침해도 그 자리 (기록은 쌓지 않음)
       if(T.classList.contains('open')) setOpen(false);
     }));
     const spy=()=>{ raf=0;
@@ -359,7 +361,11 @@ function enhance(){
   }
   tick(); setInterval(tick,30000);
   document.addEventListener('visibilitychange',()=>{ if(!document.hidden) tick(); });
-  if(location.hash){ const t=document.getElementById(location.hash.slice(1)); if(t) t.scrollIntoView(); }
+  if(location.hash){
+    const t=document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    if(t){ const own=t.querySelector(':scope>details'), up=t.closest('details');   // 접힌 섹션이면 펼친 뒤 이동
+      if(own) own.open=true; if(up) up.open=true; t.scrollIntoView(); }
+  }
   else scrollTo(0,0);
 }
 const F=document.getElementById('f'),Bt=document.getElementById('b'),Er=document.getElementById('e');
