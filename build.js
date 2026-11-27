@@ -142,6 +142,23 @@ function enhance(){
     $$('.pin.on').forEach(p=>{ if(p!==pin) p.classList.remove('on'); });
     if(pin) pin.classList.toggle('on');
   });
+  // 일본어 보여 주기 — 문장(.jaj)을 누르면 흰 화면 가득 크게 띄운다. 아무 데나 누르거나 Esc 로 닫는다
+  const jaOpen=el=>{
+    const li=el.closest('li'), k=li&&li.querySelector('.jak');
+    const ov=document.createElement('div'); ov.className='jafs'; ov.setAttribute('role','dialog'); ov.setAttribute('aria-modal','true'); ov.tabIndex=-1;
+    const pj=document.createElement('p'); pj.className='jafs-j'; pj.lang='ja'; pj.textContent=el.textContent;
+    const pk=document.createElement('p'); pk.className='jafs-k'; pk.textContent=k?k.textContent:'';
+    const ph=document.createElement('p'); ph.className='jafs-h'; ph.textContent='화면을 누르면 닫힙니다';
+    ov.append(pj,pk,ph);
+    const close=()=>{ ov.remove(); document.removeEventListener('keydown',esc,true); if(el.focus) el.focus({preventScroll:true}); };
+    const esc=ev=>{ if(ev.key==='Escape'){ ev.preventDefault(); close(); } };
+    ov.addEventListener('click',close); document.addEventListener('keydown',esc,true);
+    B.append(ov); ov.focus({preventScroll:true});
+  };
+  document.addEventListener('click',ev=>{ const el=ev.target.closest&&ev.target.closest('.jaj'); if(el) jaOpen(el); });
+  document.addEventListener('keydown',ev=>{
+    if((ev.key==='Enter'||ev.key===' ')&&ev.target.classList&&ev.target.classList.contains('jaj')){ ev.preventDefault(); jaOpen(ev.target); }
+  });
   // 리뷰 스레드 — 스레드 하나 = GitHub 이슈 하나. 메시지는 리뷰 키(이 평문 페이지 안에만 있음)로 암호화돼
   // reviews 브랜치 reviews/t<이슈 번호>/ 에 쌓인다. 누가 썼는지는 파일 이름으로만 정한다:
   // -r<번호> = 리뷰(워크플로가 기록) · -a = 답변(저장소 주인만 기록). 이슈에는 암호문만 남는다.
