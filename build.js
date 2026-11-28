@@ -379,8 +379,9 @@ function enhance(){
   const jst=()=>{ const t=new Date(Date.now()+9*36e5).toISOString(); return [t.slice(0,10),t.slice(11,16)]; };
   const days=(a,b)=>Math.round((Date.parse(b)-Date.parse(a))/864e5);
   // 날씨 예보 — 날짜가 7일 안(JST)으로 들어온 날만 Open-Meteo 에서 불러온다. 그 전엔 요청하지 않는다. 실패하면 아무것도 안 보인다.
-  // 날짜 머리 .day[data-wx="위도,경도"] → 머리글에 예보 한 줄. 카드 경고 .wxw[data-wxp][data-wxf][data-wxt][data-wxc] → 숨겨 둔 줄을
-  // 예보가 조건을 넘을 때만 보인다 (fr 초과 ~ to 이하 1시간 강설 합 snow(cm) · 평균 풍속 최대 wind · 순간 풍속 최대 gust (m/s), | 또는 & 그리고).
+  // 날짜 머리 .day[data-wx="위도,경도"] → 머리글에 예보 한 줄. 날씨 대안 .wxw[data-wxp][data-wxf][data-wxt][data-wxc] → 평소엔 제 자리 모양 그대로 두고,
+  // 예보가 조건을 넘으면 그 줄을 그 자리에서 빨간 경고로 바꾼다 — 앞말 .wxi → .wxh, 배경 .wxb 숨김, 예보 수치 한 줄 덧붙임
+  // (fr 초과 ~ to 이하 1시간 강설 합 snow(cm) · 평균 풍속 최대 wind · 순간 풍속 최대 gust (m/s), | 또는 & 그리고).
   // 값은 일본 기상청 모델(jma_seamless)을 먼저 쓰고, 그 모델에 없는 값(강수 확률 · 순간 풍속 · 먼 날)은 best_match 로 채운다.
   (()=>{
     const [ymd]=jst(), inW=x=>{ const dd=x.closest('.day'), n=dd?days(ymd,dd.dataset.date):-1; return n>=0&&n<=7; };
@@ -443,8 +444,9 @@ function enhance(){
         if(/wind/.test(el.dataset.wxc)&&M.wind!=null) v.push('바람 '+Math.round(M.wind)+'m/s');
         if(/gust/.test(el.dataset.wxc)&&M.gust!=null) v.push('순간 '+Math.round(M.gust)+'m/s');
         $$('.wxv',el).forEach(x=>x.remove());
+        el.classList.remove('tp','al'); el.classList.add('wn','wxon');
+        $$('.wxi,.wxb',el).forEach(x=>{ x.hidden=true; }); $$('.wxh',el).forEach(x=>{ x.hidden=false; });
         el.append(mk('span','wxv','예보 '+fr.slice(11)+'~'+to.slice(11)+' · '+v.join(' · ')));
-        el.hidden=false;
         const day=el.closest('.day'), it=el.closest('.it'), p=day&&line(day);
         if(p&&it&&it.id&&!$('a.wxa',p)){ const m=mk('a','wxa','⚠ 날씨 대안 보기'); m.href='#'+it.id; p.append(m); }
       }
